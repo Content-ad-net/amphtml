@@ -24,7 +24,7 @@ limitations under the License.
       height=[Height of Ad Widget]
       type="contentad"
       data-id="[Ad Widget GUID]"
-      data-d="[Publisher Domain ID]"
+      data-d="[Ad Widget Domain ID]"
       data-wid="[Ad Widget ID]">
   </amp-ad>
 ```
@@ -36,5 +36,5 @@ For semantics of configuration, please see [Content.ad AMP Widget](http://help.c
 Supported parameters:
 
 - data-id : Ad Widget GUID
-- data-d : Publisher Domain ID
+- data-d : Ad Widget Domain ID
 - data-wid : Ad Widget ID
