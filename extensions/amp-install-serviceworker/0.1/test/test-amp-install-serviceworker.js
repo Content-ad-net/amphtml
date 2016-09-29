@@ -14,9 +14,14 @@
  * limitations under the License.
  */
 
-import '../amp-install-serviceworker';
+import {AmpInstallServiceWorker} from '../amp-install-serviceworker';
 import {adopt} from '../../../../src/runtime';
-import {getService} from '../../../../src/service';
+import {
+  getService,
+  getServiceForDoc,
+  resetServiceForTesting,
+} from '../../../../src/service';
+import {installTimerService} from '../../../../src/service/timer-impl';
 import * as sinon from 'sinon';
 
 adopt(window);
@@ -25,21 +30,27 @@ describe('amp-install-serviceworker', () => {
 
   let clock;
   let sandbox;
+  let container;
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
     clock = sandbox.useFakeTimers();
+    container = document.createElement('div');
+    document.body.appendChild(container);
   });
 
   afterEach(() => {
     sandbox.restore();
+    if (container.parentNode) {
+      container.parentNode.removeChild(container);
+    }
   });
 
   it('should install for same origin', () => {
-    const install = document.createElement('amp-install-serviceworker');
-    const implementation = install.implementation_;
-    expect(implementation).to.be.defined;
+    const install = document.createElement('div');
+    container.appendChild(install);
     install.setAttribute('src', 'https://example.com/sw.js');
+    const implementation = new AmpInstallServiceWorker(install);
     let calledSrc;
     const p = new Promise(() => {});
     implementation.win = {
@@ -131,9 +142,9 @@ describe('amp-install-serviceworker', () => {
     let calledSrc;
 
     beforeEach(() => {
-      install = document.createElement('amp-install-serviceworker');
-      implementation = install.implementation_;
-      expect(implementation).to.be.defined;
+      install = document.createElement('div');
+      container.appendChild(install);
+      implementation = new AmpInstallServiceWorker(install);
       install.setAttribute('src', 'https://www.example.com/sw.js');
       calledSrc = undefined;
       const p = new Promise(() => {});
@@ -151,13 +162,17 @@ describe('amp-install-serviceworker', () => {
         },
         setTimeout: window.setTimeout,
         clearTimeout: window.clearTimeout,
+        document: {nodeType: /* document */ 9},
       };
+      installTimerService(win);
+      win.document.defaultView = win;
       implementation.win = win;
       documentInfo = {
         canonicalUrl: 'https://www.example.com/path',
         sourceUrl: 'https://source.example.com/path',
       };
-      getService(win, 'documentInfo', () => {
+      resetServiceForTesting(window, 'documentInfo');
+      getServiceForDoc(document, 'documentInfo', () => {
         return documentInfo;
       });
       whenVisible = Promise.resolve();

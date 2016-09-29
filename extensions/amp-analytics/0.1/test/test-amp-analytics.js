@@ -28,11 +28,9 @@ import {markElementScheduledForTesting} from '../../../../src/custom-element';
 import {installCidService,} from
     '../../../../extensions/amp-analytics/0.1/cid-impl';
 import {installViewerService} from '../../../../src/service/viewer-impl';
-import {installViewportService} from '../../../../src/service/viewport-impl';
-import {
-  installUrlReplacementsService,
-} from '../../../../src/service/url-replacements-impl';
+import {urlReplacementsForDoc} from '../../../../src/url-replacements';
 import * as sinon from 'sinon';
+
 
 /* global require: false */
 const VENDOR_REQUESTS = require('./vendor-requests.json');
@@ -66,9 +64,7 @@ describe('amp-analytics', function() {
       markElementScheduledForTesting(iframe.win, 'amp-analytics');
       markElementScheduledForTesting(iframe.win, 'amp-user-notification');
       installViewerService(iframe.win);
-      installViewportService(iframe.win);
       installCidService(iframe.win);
-      installUrlReplacementsService(iframe.win);
       uidService = installUserNotificationManager(iframe.win);
 
       resetServiceForTesting(iframe.win, 'xhr');
@@ -141,6 +137,24 @@ describe('amp-analytics', function() {
     return waitForSendRequest(analytics, 100);
   }
 
+  /**
+   * Clears the property in the config that indicates that the requests
+   * should be sent via an iframe ping. This is needed because we pass
+   * in all the vendor requests as inline config and iframePings are not
+   * allowed to be used without AMP team's approval.
+   *
+   * @param {!JSONObject} config The inline config to update.
+   * @return {!JSONObject}
+   */
+  function clearIframePing(config) {
+    for (const t in config.triggers) {
+      if (config.triggers[t].iframePing) {
+        config.triggers[t].iframePing = undefined;
+      }
+    }
+    return config;
+  }
+
   it('sends a basic hit', function() {
     const analytics = getAnalyticsTag(trivialConfig);
 
@@ -162,16 +176,14 @@ describe('amp-analytics', function() {
         for (const name in config.requests) {
           it('should produce request: ' + name +
               '. If this test fails update vendor-requests.json', () => {
-            const analytics = getAnalyticsTag({
-              requests: config.requests,
-            });
+            const analytics = getAnalyticsTag(clearIframePing(config));
             analytics.createdCallback();
             analytics.buildCallback();
-            const urlReplacements = installUrlReplacementsService(
-                analytics.win);
+            const urlReplacements = urlReplacementsForDoc(
+                analytics.win.document);
             sandbox.stub(urlReplacements, 'getReplacement_', function(name) {
               expect(this.replacements_).to.have.property(name);
-              return '_' + name.toLowerCase() + '_';
+              return {sync: '_' + name.toLowerCase() + '_'};
             });
             const encodeVars = analytics.encodeVars_;
             sandbox.stub(analytics, 'encodeVars_', function(val, name) {
@@ -186,7 +198,8 @@ describe('amp-analytics', function() {
                 request: name,
               }, {
                 vars: Object.create(null),
-              }).then(url => {
+              }).then(urls => {
+                const url = urls[0];
                 const val = VENDOR_REQUESTS[vendor][name];
                 if (val == null) {
                   throw new Error('Define ' + vendor + '.' + name +
@@ -279,7 +292,7 @@ describe('amp-analytics', function() {
     });
   });
 
-  it('expands nested requests', function() {
+  it('expands nested requests (3 levels)', function() {
     const analytics = getAnalyticsTag({
       'requests': {'foo':
         'https://example.com/bar&${foobar}', 'foobar': '${baz}', 'baz': 'b1'},
@@ -302,6 +315,20 @@ describe('amp-analytics', function() {
       expect(sendRequestSpy.calledOnce).to.be.true;
       expect(sendRequestSpy.args[0][0])
           .to.equal('/bar&/bar&/bar&&baz&baz&baz');
+    });
+  });
+
+  it('sends multiple requests per trigger', function() {
+    const analytics = getAnalyticsTag({
+      'requests': {'foo':
+        'https://example.com/bar&${foobar}', 'foobar': '${baz}', 'baz': 'b1'},
+      'triggers': [{'on': 'visible', 'request': ['foo', 'foobar']}],
+    });
+
+    return waitForSendRequest(analytics).then(() => {
+      expect(sendRequestSpy.calledTwice).to.be.true;
+      expect(sendRequestSpy.args[0][0]).to.equal('https://example.com/bar&b1');
+      expect(sendRequestSpy.args[1][0]).to.equal('b1');
     });
   });
 
@@ -632,7 +659,7 @@ describe('amp-analytics', function() {
     beforeEach(() => {
       config = {
         vars: {host: 'example.com', path: 'helloworld'},
-        extraUrlParams: {'s.evar0': '0', 's.evar1': '1', 'foofoo': 'baz'},
+        extraUrlParams: {'s.evar0': '0', 's.evar1': '${path}', 'foofoo': 'baz'},
         requests: {foo: 'https://${host}/${path}?a=b'},
         triggers: {trig: {'on': 'visible', 'request': 'foo'}},
       };
@@ -640,23 +667,24 @@ describe('amp-analytics', function() {
 
     function verifyRequest() {
       expect(sendRequestSpy.args[0][0]).to.have.string('v0=0');
-      expect(sendRequestSpy.args[0][0]).to.have.string('v1=1');
+      expect(sendRequestSpy.args[0][0]).to.have.string('v1=helloworld');
       expect(sendRequestSpy.args[0][0]).to.not.have.string('s.evar1');
       expect(sendRequestSpy.args[0][0]).to.not.have.string('s.evar0');
       expect(sendRequestSpy.args[0][0]).to.have.string('foofoo=baz');
     }
 
     it('are sent', () => {
-      const analytics = getAnalyticsTag(config, {'config': 'config1'});
+      const analytics = getAnalyticsTag(config);
       return waitForSendRequest(analytics).then(() => {
         expect(sendRequestSpy.args[0][0]).to.equal(
-            'https://example.com/helloworld?a=b&s.evar0=0&s.evar1=1&foofoo=baz');
+            'https://example.com/helloworld?a=b&s.evar0=0&s.evar1=helloworld' +
+            '&foofoo=baz');
       });
     });
 
     it('are renamed by extraUrlParamsReplaceMap', () => {
       config.extraUrlParamsReplaceMap = {'s.evar': 'v'};
-      const analytics = getAnalyticsTag(config , {'config': 'config1'});
+      const analytics = getAnalyticsTag(config);
       return waitForSendRequest(analytics).then(() => {
         verifyRequest();
       });
@@ -665,7 +693,7 @@ describe('amp-analytics', function() {
     it('are supported at trigger level', () => {
       config.triggers.trig.extraUrlParams = {c: 'd', 's.evar': 'e'};
       config.extraUrlParamsReplaceMap = {'s.evar': 'v'};
-      const analytics = getAnalyticsTag(config, {'config': 'config1'});
+      const analytics = getAnalyticsTag(config);
       return waitForSendRequest(analytics).then(() => {
         verifyRequest();
         expect(sendRequestSpy.args[0][0]).to.have.string('c=d');
@@ -675,10 +703,20 @@ describe('amp-analytics', function() {
 
     it('are supported as a var in URL', () => {
       config.requests.foo = 'https://${host}/${path}?${extraUrlParams}&a=b';
-      const analytics = getAnalyticsTag(config, {'config': 'config1'});
+      const analytics = getAnalyticsTag(config);
       return waitForSendRequest(analytics).then(() => {
         expect(sendRequestSpy.args[0][0]).to.equal(
-            'https://example.com/helloworld?s.evar0=0&s.evar1=1&foofoo=baz&a=b');
+            'https://example.com/helloworld?s.evar0=0&s.evar1=helloworld' +
+            '&foofoo=baz&a=b');
+      });
+    });
+
+    it('work when the value is an array', () => {
+      config.extraUrlParams = {'foo': ['0']};
+      const analytics = getAnalyticsTag(config);
+      return waitForSendRequest(analytics).then(() => {
+        expect(sendRequestSpy.args[0][0]).to.equal(
+            'https://example.com/helloworld?a=b&foo=0');
       });
     });
   });
@@ -774,8 +812,7 @@ describe('amp-analytics', function() {
       config.triggers.sampled.sampleSpec.sampleOn = '${pageViewId}';
       const analytics = getAnalyticsTag(config);
 
-      const urlReplacements = installUrlReplacementsService(
-                analytics.win);
+      const urlReplacements = urlReplacementsForDoc(analytics.win.document);
       sandbox.stub(urlReplacements, 'getReplacement_').returns(0);
       sandbox.stub(crypto, 'uniform')
           .withArgs('0').returns(Promise.resolve(0.005));

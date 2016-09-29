@@ -18,6 +18,7 @@ import {endsWith} from './string';
 import {user} from './log';
 import {getMode} from './mode';
 import {urls} from './config';
+import {isArray} from './types';
 
 /**
  * Cached a-tag to avoid memory allocation during URL parsing.
@@ -35,6 +36,9 @@ let cache;
 
 /** @private @const Matches amp_js_* paramters in query string. */
 const AMP_JS_PARAMS_REGEX = /[?&]amp_js[^&]*/;
+
+/** @const {string} */
+export const SOURCE_ORIGIN_PARAM = '__amp_source_origin';
 
 /**
  * @typedef {({
@@ -57,11 +61,12 @@ export let Location;
  * Consider the returned object immutable. This is enforced during
  * testing by freezing the object.
  * @param {string} url
+ * @param {boolean=} opt_nocache
  * @return {!Location}
  */
-export function parseUrl(url) {
+export function parseUrl(url, opt_nocache) {
   if (!a) {
-    a = self.document.createElement('a');
+    a = /** @type {!HTMLAnchorElement} */ (self.document.createElement('a'));
     cache = self.UrlCache || (self.UrlCache = Object.create(null));
   }
 
@@ -114,8 +119,12 @@ export function parseUrl(url) {
     info.origin = info.protocol + '//' + info.host;
   }
   // Freeze during testing to avoid accidental mutation.
-  cache[url] = (getMode().test && Object.freeze) ? Object.freeze(info) : info;
-  return info;
+  const frozen = (getMode().test && Object.freeze) ? Object.freeze(info) : info;
+
+  if (opt_nocache) {
+    return frozen;
+  }
+  return cache[url] = frozen;
 }
 
 /**
@@ -160,7 +169,7 @@ export function addParamToUrl(url, key, value, opt_addToFront) {
  * Appends query string fields and values to a url. The `params` objects'
  * `key`s and `value`s will be transformed into query string keys/values.
  * @param {string} url
- * @param {!Object<string, string>} params
+ * @param {!Object<string, string|!Array<string>>} params
  * @return {string}
  */
 export function addParamsToUrl(url, params) {
@@ -170,7 +179,7 @@ export function addParamsToUrl(url, params) {
 /**
  * Serializes the passed parameter map into a query string with both keys
  * and values encoded.
- * @param {!Object<string, *>} params
+ * @param {!Object<string, string|!Array<string>>} params
  * @return {string}
  */
 export function serializeQueryString(params) {
@@ -179,8 +188,15 @@ export function serializeQueryString(params) {
     const v = params[k];
     if (v == null) {
       continue;
+    } else if (isArray(v)) {
+      for (let i = 0; i < v.length; i++) {
+        const sv = /** @type {string} */ (v[i]);
+        s.push(`${encodeURIComponent(k)}=${encodeURIComponent(sv)}`);
+      }
+    } else {
+      const sv = /** @type {string} */ (v);
+      s.push(`${encodeURIComponent(k)}=${encodeURIComponent(sv)}`);
     }
-    s.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`);
   }
   return s.join('&');
 }
@@ -200,7 +216,8 @@ export function assertHttpsUrl(
     urlString, elementContext, sourceName = 'source') {
   user().assert(urlString != null, '%s %s must be available',
       elementContext, sourceName);
-  const url = parseUrl(urlString);
+  // (erwinm, #4560): type cast necessary until #4560 is fixed
+  const url = parseUrl(/** @type {string} */ (urlString));
   user().assert(
       url.protocol == 'https:' || /^(\/\/)/.test(urlString) ||
       url.hostname == 'localhost' || endsWith(url.hostname, '.localhost'),
@@ -208,7 +225,7 @@ export function assertHttpsUrl(
       '"https://" or "//" or be relative and served from ' +
       'either https or from localhost. Invalid value: %s',
       elementContext, sourceName, urlString);
-  return urlString;
+  return /** @type {string} */ (urlString);
 }
 
 /**
@@ -228,7 +245,7 @@ export function assertAbsoluteHttpOrHttpsUrl(urlString) {
  * Parses the query string of an URL. This method returns a simple key/value
  * map. If there are duplicate keys the latest value is returned.
  * @param {string} queryString
- * @return {!Object<string, string>}
+ * @return {!Object<string>}
  */
 export function parseQueryString(queryString) {
   const params = Object.create(null);
@@ -404,4 +421,29 @@ export function resolveRelativeUrlFallback_(relativeUrlString, baseUrl) {
           basePath.slice(0, basePath.length - 1).join('/') :
           '') +
       '/' + relativeUrlString;
+}
+
+
+/**
+ * Add "__amp_source_origin" query parameter to the URL.
+ * @param {!Window} win
+ * @param {string} url
+ * @return {string}
+ */
+export function getCorsUrl(win, url) {
+  checkCorsUrl(url);
+  const sourceOrigin = getSourceOrigin(win.location.href);
+  return addParamToUrl(url, SOURCE_ORIGIN_PARAM, sourceOrigin);
+}
+
+
+/**
+ * Checks if the url have __amp_source_origin and throws if it does.
+ * @param {string} url
+ */
+export function checkCorsUrl(url) {
+  const parsedUrl = parseUrl(url);
+  const query = parseQueryString(parsedUrl.search);
+  user().assert(!(SOURCE_ORIGIN_PARAM in query),
+      'Source origin is not allowed in %s', url);
 }

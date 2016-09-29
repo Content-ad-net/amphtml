@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+import {AmpDocSingle} from '../../src/service/ampdoc-impl';
 import {Resources} from '../../src/service/resources-impl';
 import {Resource, ResourceState} from '../../src/service/resource';
 import {VisibilityState} from '../../src/visibility-state';
@@ -30,7 +31,7 @@ describe('Resources', () => {
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
     clock = sandbox.useFakeTimers();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
   });
 
   afterEach(() => {
@@ -285,6 +286,7 @@ describe('Resources pause/resume/unlayout scheduling', () => {
 
   function createElement() {
     return {
+      ownerDocument: {defaultView: window},
       tagName: 'amp-test',
       isBuilt() {
         return true;
@@ -331,7 +333,7 @@ describe('Resources pause/resume/unlayout scheduling', () => {
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
     const parentTuple = createElementWithResource(1);
     parent = parentTuple[0];
     child0 = document.createElement('div');
@@ -466,6 +468,7 @@ describe('Resources schedulePreload', () => {
 
   function createElement() {
     return {
+      ownerDocument: {defaultView: window},
       tagName: 'amp-test',
       isBuilt() {
         return true;
@@ -519,7 +522,7 @@ describe('Resources schedulePreload', () => {
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
     const parentTuple = createElementWithResource(1);
     parent = parentTuple[0];
     placeholder = document.createElement('div');
@@ -591,6 +594,7 @@ describe('Resources discoverWork', () => {
 
   function createElement(rect) {
     return {
+      ownerDocument: {defaultView: window},
       tagName: 'amp-test',
       isBuilt: () => {
         return true;
@@ -631,7 +635,7 @@ describe('Resources discoverWork', () => {
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
     viewportMock = sandbox.mock(resources.viewport_);
 
     resource1 = createResource(1, layoutRectLtwh(10, 10, 100, 100));
@@ -846,6 +850,64 @@ describe('Resources discoverWork', () => {
     expect(setInViewport).to.have.been.calledBefore(schedule);
   });
 
+  it('should build resource when not built', () => {
+    const schedulePassStub = sandbox.stub(resources, 'schedulePass');
+    sandbox.stub(resources, 'schedule_');
+    resources.documentReady_ = true;
+    resource1.element.isBuilt = () => false;
+    resource1.state_ = ResourceState.NOT_BUILT;
+    resource1.build = sandbox.spy();
+
+    resources.discoverWork_();
+
+    expect(resource1.build).to.be.calledOnce;
+    expect(schedulePassStub).to.not.be.called;
+  });
+
+  it('should build resource when not built and before doc ready', () => {
+    const schedulePassStub = sandbox.stub(resources, 'schedulePass');
+    sandbox.stub(resources, 'schedule_');
+    resources.documentReady_ = false;
+    resource1.element.nextSibling = {};
+    resource1.element.isBuilt = () => false;
+    resource1.state_ = ResourceState.NOT_BUILT;
+    resource1.build = sandbox.spy();
+
+    resources.discoverWork_();
+
+    expect(resource1.build).to.be.calledOnce;
+    expect(schedulePassStub).to.not.be.called;
+  });
+
+  it('should not build a blacklisted resource', () => {
+    const schedulePassStub = sandbox.stub(resources, 'schedulePass');
+    sandbox.stub(resources, 'schedule_');
+    resources.documentReady_ = true;
+    resource1.state_ = ResourceState.NOT_BUILT;
+    resource1.element.isBuilt = () => false;
+    resource1.blacklisted_ = true;
+    resource1.build = sandbox.spy();
+
+    resources.discoverWork_();
+
+    expect(resource1.build).to.not.be.called;
+    expect(schedulePassStub).to.not.be.called;
+  });
+
+  it('should not build a blacklisted resource before doc ready', () => {
+    const schedulePassStub = sandbox.stub(resources, 'schedulePass');
+    sandbox.stub(resources, 'schedule_');
+    resource1.nextSibling = {};
+    resource1.state_ = ResourceState.NOT_BUILT;
+    resource1.element.isBuilt = () => false;
+    resource1.blacklisted_ = true;
+    resource1.build = sandbox.spy();
+
+    resources.discoverWork_();
+
+    expect(resource1.build).to.not.be.called;
+    expect(schedulePassStub).to.not.be.called;
+  });
 });
 
 
@@ -853,6 +915,7 @@ describe('Resources changeSize', () => {
 
   function createElement(rect) {
     return {
+      ownerDocument: {defaultView: window},
       tagName: 'amp-test',
       isBuilt: () => {
         return true;
@@ -901,7 +964,7 @@ describe('Resources changeSize', () => {
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
     clock = sandbox.useFakeTimers();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
     resources.isRuntimeOn_ = false;
     viewportMock = sandbox.mock(resources.viewport_);
 
@@ -1203,10 +1266,11 @@ describe('Resources changeSize', () => {
 });
 
 
-describe('Resources mutateElement', () => {
+describe('Resources mutateElement and collapse', () => {
 
   function createElement(rect, isAmp) {
     return {
+      ownerDocument: {defaultView: window},
       tagName: isAmp ? 'amp-test' : 'div',
       classList: {
         contains: className => isAmp && className == '-amp-element',
@@ -1247,6 +1311,7 @@ describe('Resources mutateElement', () => {
     resource.state_ = ResourceState.READY_FOR_LAYOUT;
     resource.layoutBox_ = rect;
     resource.changeSize = sandbox.spy();
+    resource.completeCollapse = sandbox.spy();
     return resource;
   }
 
@@ -1260,7 +1325,7 @@ describe('Resources mutateElement', () => {
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
     viewportMock = sandbox.mock(resources.viewport_);
     resources.vsync_ = {
       mutate: callback => callback(),
@@ -1371,6 +1436,33 @@ describe('Resources mutateElement', () => {
       expect(relayoutTopStub.getCall(1).args[0]).to.equal(1010);
     });
   });
+
+  it('should complete collapse and trigger relayout', () => {
+    const oldTop = resource1.getLayoutBox().top;
+    resources.collapseElement(resource1.element);
+    expect(resource1.completeCollapse.callCount).to.equal(1);
+    expect(relayoutTopStub.callCount).to.equal(1);
+    expect(relayoutTopStub.args[0][0]).to.equal(oldTop);
+  });
+
+  it('should ignore relayout on an already collapsed element', () => {
+    resource1.layoutBox_.width = 0;
+    resource1.layoutBox_.height = 0;
+    resources.collapseElement(resource1.element);
+    expect(resource1.completeCollapse.callCount).to.equal(1);
+    expect(relayoutTopStub.callCount).to.equal(0);
+  });
+
+  it('should notify owner', () => {
+    const owner = {
+      contains: () => true,
+      collapsedCallback: sandbox.spy(),
+    };
+    Resource.setOwner(resource1.element, owner);
+    resources.collapseElement(resource1.element);
+    expect(owner.collapsedCallback.callCount).to.equal(1);
+    expect(owner.collapsedCallback.args[0][0]).to.equal(resource1.element);
+  });
 });
 
 
@@ -1386,6 +1478,7 @@ describe('Resources.add', () => {
 
   function createElement() {
     const element = {
+      ownerDocument: {defaultView: window},
       tagName: 'amp-test',
       isBuilt() {
         return true;
@@ -1408,7 +1501,7 @@ describe('Resources.add', () => {
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
-    resources = new Resources(window);
+    resources = new Resources(new AmpDocSingle(window));
     resources.pendingBuildResources_ = [];
     parent = createElementWithResource(1)[0];
     parentResource = parent['__AMP__RESOURCE'];
@@ -1423,6 +1516,7 @@ describe('Resources.add', () => {
   });
 
   it('should build elements immediately if the document is ready', () => {
+    const schedulePassStub = sandbox.stub(resources, 'schedulePass');
     child1.isBuilt = () => false;
     child2.isBuilt = () => false;
     resources.documentReady_ = false;
@@ -1431,6 +1525,22 @@ describe('Resources.add', () => {
     resources.documentReady_ = true;
     resources.add(child2);
     expect(child2.build.calledOnce).to.be.true;
+    expect(schedulePassStub).to.be.calledOnce;
+  });
+
+  it('should not schedule pass when immediate build fails', () => {
+    const schedulePassStub = sandbox.stub(resources, 'schedulePass');
+    child1.isBuilt = () => false;
+    const child1BuildSpy = sandbox.spy();
+    child1.build = () => {
+      // Emulate an error happening during an element build.
+      child1BuildSpy();
+      throw new Error('child1-build-error');
+    };
+    resources.documentReady_ = true;
+    resources.add(child1);
+    expect(child1BuildSpy.calledOnce).to.be.true;
+    expect(schedulePassStub).to.not.be.called;
   });
 
   it('should add element to pending build when document is not ready', () => {
@@ -1513,6 +1623,7 @@ describe('Resources.add', () => {
     });
 
     it('should build everything pending when document is ready', () => {
+      const schedulePassStub = sandbox.stub(resources, 'schedulePass');
       resources.documentReady_ = true;
       resources.pendingBuildResources_ = [parentResource, resource1, resource2];
       const child1BuildSpy = sandbox.spy();
@@ -1526,6 +1637,23 @@ describe('Resources.add', () => {
       expect(child2.build.called).to.be.true;
       expect(parent.build.called).to.be.true;
       expect(resources.pendingBuildResources_.length).to.be.equal(0);
+      expect(schedulePassStub).to.be.calledOnce;
+    });
+
+    it('should not schedule pass if all builds failed', () => {
+      const schedulePassStub = sandbox.stub(resources, 'schedulePass');
+      resources.documentReady_ = true;
+      resources.pendingBuildResources_ = [resource1];
+      const child1BuildSpy = sandbox.spy();
+      child1.build = () => {
+        // Emulate an error happening during an element build.
+        child1BuildSpy();
+        throw new Error('child1-build-error');
+      };
+      resources.buildReadyResources_();
+      expect(child1BuildSpy.called).to.be.true;
+      expect(resources.pendingBuildResources_.length).to.be.equal(0);
+      expect(schedulePassStub).to.not.be.called;
     });
   });
 });

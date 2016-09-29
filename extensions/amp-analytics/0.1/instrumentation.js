@@ -15,13 +15,13 @@
  */
 
 import {dev} from '../../../src/log';
-import {isVisibilitySpecValid} from './visibility-impl';
+import {getElement, isVisibilitySpecValid} from './visibility-impl';
 import {Observable} from '../../../src/observable';
 import {fromClass} from '../../../src/service';
 import {timerFor} from '../../../src/timer';
 import {user} from '../../../src/log';
 import {viewerFor} from '../../../src/viewer';
-import {viewportFor} from '../../../src/viewport';
+import {viewportForDoc} from '../../../src/viewport';
 import {visibilityFor} from '../../../src/visibility';
 import {getDataParamsFromAttributes} from '../../../src/dom';
 
@@ -42,10 +42,13 @@ let AnalyticsEventListenerDef;
  * @param {!Window} window Window object to listen on.
  * @param {!JSONType} config Configuration for instrumentation.
  * @param {!AnalyticsEventListenerDef} listener Callback to call when the event
- *          fires.
+ *  fires.
+ * @param {!Element} analyticsElement The element associated with the
+ *  config.
  */
-export function addListener(window, config, listener) {
-  return instrumentationServiceFor(window).addListener(config, listener);
+export function addListener(window, config, listener, analyticsElement) {
+  return instrumentationServiceFor(window).addListener(config, listener,
+      analyticsElement);
 }
 
 /**
@@ -69,11 +72,11 @@ class AnalyticsEvent {
 
   /**
    * @param {!AnalyticsEventType} type The type of event.
-   * @param {!Object<string, string>} A map of vars and their values.
+   * @param {!Object<string, string>} opt_vars A map of vars and their values.
    */
-  constructor(type, vars) {
+  constructor(type, opt_vars) {
     this.type = type;
-    this.vars = vars || Object.create(null);
+    this.vars = opt_vars || Object.create(null);
   }
 }
 
@@ -96,7 +99,7 @@ export class InstrumentationService {
     this.viewer_ = viewerFor(window);
 
     /** @const {!Viewport} */
-    this.viewport_ = viewportFor(window);
+    this.viewport_ = viewportForDoc(window.document);
 
     /** @private {boolean} */
     this.clickHandlerRegistered_ = false;
@@ -129,14 +132,16 @@ export class InstrumentationService {
 
   /**
    * @param {!JSONType} config Configuration for instrumentation.
-   * @param {!AnalyticsEventListenerDef} The callback to call when the event
-   *   occurs.
+   * @param {!AnalyticsEventListenerDef} listener The callback to call when the event
+   *  occurs.
+   * @param {!Element} analyticsElement The element associated with the
+   *  config.
    */
-  addListener(config, listener) {
+  addListener(config, listener, analyticsElement) {
     const eventType = config['on'];
     if (eventType === AnalyticsEventType.VISIBLE) {
       this.createVisibilityListener_(listener, config,
-          AnalyticsEventType.VISIBLE);
+          AnalyticsEventType.VISIBLE, analyticsElement);
     } else if (eventType === AnalyticsEventType.CLICK) {
       if (!config['selector']) {
         user().error(this.TAG_, 'Missing required selector on click trigger');
@@ -167,7 +172,7 @@ export class InstrumentationService {
       }
     } else if (eventType === AnalyticsEventType.HIDDEN) {
       this.createVisibilityListener_(listener, config,
-          AnalyticsEventType.HIDDEN);
+          AnalyticsEventType.HIDDEN, analyticsElement);
     } else {
       let observers = this.customEventObservers_[eventType];
       if (!observers) {
@@ -221,9 +226,11 @@ export class InstrumentationService {
    *   occurs.
    * @param {!JSONType} config Configuration for instrumentation.
    * @param {AnalyticsEventType} eventType Event type for which the callback is triggered.
+   * @param {!Element} analyticsElement The element assoicated with the
+   *   config.
    * @private
    */
-  createVisibilityListener_(callback, config, eventType) {
+  createVisibilityListener_(callback, config, eventType, analyticsElement) {
     dev().assert(eventType == AnalyticsEventType.VISIBLE ||
         eventType == AnalyticsEventType.HIDDEN,
         'createVisibilityListener should be called with visible or hidden ' +
@@ -237,18 +244,17 @@ export class InstrumentationService {
 
       visibilityFor(this.win_).then(visibility => {
         visibility.listenOnce(spec, vars => {
-          if (spec['selector']) {
-            const attr = getDataParamsFromAttributes(
-              this.win_.document.getElementById(spec['selector'].slice(1)),
-              null,
-              VARIABLE_DATA_ATTRIBUTE_KEY
-            );
+          const el = getElement(spec['selector'], analyticsElement,
+              spec['selectionMethod']);
+          if (el) {
+            const attr = getDataParamsFromAttributes(el, null,
+                VARIABLE_DATA_ATTRIBUTE_KEY);
             for (const key in attr) {
               vars[key] = attr[key];
             }
           }
           callback(new AnalyticsEvent(eventType, vars));
-        }, shouldBeVisible);
+        }, shouldBeVisible, analyticsElement);
       });
     } else {
       if (this.viewer_.isVisible() == shouldBeVisible) {
@@ -484,10 +490,16 @@ export class InstrumentationService {
    * @private
    */
   createTimerListener_(listener, timerSpec) {
+    const hasImmediate = timerSpec.hasOwnProperty('immediate');
+    const callImmediate = hasImmediate ? Boolean(timerSpec.immediate) : true;
     const intervalId = this.win_.setInterval(
-        listener.bind(null, new AnalyticsEvent(AnalyticsEventType.TIMER)),
-        timerSpec['interval'] * 1000);
-    listener(new AnalyticsEvent(AnalyticsEventType.TIMER));
+      listener.bind(null, new AnalyticsEvent(AnalyticsEventType.TIMER)),
+      timerSpec['interval'] * 1000
+    );
+
+    if (callImmediate) {
+      listener(new AnalyticsEvent(AnalyticsEventType.TIMER));
+    }
 
     const maxTimerLength = timerSpec['maxTimerLength'] ||
         DEFAULT_MAX_TIMER_LENGTH_SECONDS_;

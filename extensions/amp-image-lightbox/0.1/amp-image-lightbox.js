@@ -26,8 +26,8 @@ import {
 import {Layout} from '../../../src/layout';
 import {bezierCurve} from '../../../src/curve';
 import {continueMotion} from '../../../src/motion';
-import {historyFor} from '../../../src/history';
-import {isLoaded, loadPromise} from '../../../src/event-helper';
+import {historyForDoc} from '../../../src/history';
+import {isLoaded} from '../../../src/event-helper';
 import {
   layoutRectFromDomRect,
   layoutRectLtwh,
@@ -67,13 +67,18 @@ export class ImageViewer {
   /**
    * @param {!AmpImageLightbox} lightbox
    * @param {!Window} win
+   * @param {!function(T, number=):Promise<T>} loadPromise
+   * @template T
    */
-  constructor(lightbox, win) {
+  constructor(lightbox, win, loadPromise) {
     /** @private {!AmpImageLightbox} */
     this.lightbox_ = lightbox;
 
     /** @const {!Window} */
     this.win = win;
+
+    /** @private {function(T, number=):Promise<T>} */
+    this.loadPromise_ = loadPromise;
 
     /** @private {!Element} */
     this.viewer_ = lightbox.element.ownerDocument.createElement('div');
@@ -289,7 +294,7 @@ export class ImageViewer {
     // and then naturally upgrade to a higher quality image.
     return timerFor(this.win).promise(1).then(() => {
       this.image_.setAttribute('src', src);
-      return loadPromise(this.image_);
+      return this.loadPromise_(this.image_);
     });
   }
 
@@ -679,7 +684,8 @@ class AmpImageLightbox extends AMP.BaseElement {
     this.element.appendChild(this.container_);
 
     /** @private {!ImageViewer} */
-    this.imageViewer_ = new ImageViewer(this, this.win);
+    this.imageViewer_ = new ImageViewer(this, this.win,
+        this.loadPromise.bind(this));
     this.container_.appendChild(this.imageViewer_.getElement());
 
     /** @private {!Element} */
@@ -983,8 +989,8 @@ class AmpImageLightbox extends AMP.BaseElement {
       if (this.sourceImage_) {
         this.sourceImage_.classList.remove('-amp-ghost');
       }
+      this./*OK*/collapse();
       st.setStyles(this.element, {
-        display: 'none',
         opacity: '',
       });
       st.setStyles(this.container_, {opacity: ''});
@@ -997,7 +1003,7 @@ class AmpImageLightbox extends AMP.BaseElement {
 
   /** @private @return {!History} */
   getHistory_() {
-    return historyFor(this.element.ownerDocument.defaultView);
+    return historyForDoc(this.getAmpDoc());
   }
 }
 

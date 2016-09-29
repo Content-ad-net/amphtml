@@ -17,7 +17,7 @@
 import {Gestures} from '../../../src/gesture';
 import {Layout} from '../../../src/layout';
 import {SwipeXYRecognizer} from '../../../src/gesture-recognizers';
-import {historyFor} from '../../../src/history';
+import {historyForDoc} from '../../../src/history';
 import {vsyncFor} from '../../../src/vsync';
 import * as st from '../../../src/style';
 
@@ -117,7 +117,7 @@ class AmpLightbox extends AMP.BaseElement {
       return;
     }
     this.getViewport().leaveLightboxMode();
-    this.element.style.display = 'none';
+    this./*OK*/collapse();
     if (this.historyId_ != -1) {
       this.getHistory_().pop(this.historyId_);
     }
@@ -129,7 +129,7 @@ class AmpLightbox extends AMP.BaseElement {
   }
 
   getHistory_() {
-    return historyFor(this.element.ownerDocument.defaultView);
+    return historyForDoc(this.getAmpDoc());
   }
 }
 

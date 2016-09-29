@@ -22,7 +22,7 @@ import {
   preloadBootstrap,
   resetCountForTesting,
 } from '../../src/3p-frame';
-import {documentInfoFor} from '../../src/document-info';
+import {documentInfoForDoc} from '../../src/document-info';
 import {loadPromise} from '../../src/event-helper';
 import {resetServiceForTesting} from '../../src/service';
 import {validateData} from '../../3p/3p';
@@ -33,10 +33,13 @@ describe('3p-frame', () => {
 
   let clock;
   let sandbox;
+  let container;
 
   beforeEach(() => {
     sandbox = sinon.sandbox.create();
     clock = sandbox.useFakeTimers();
+    container = document.createElement('div');
+    document.body.appendChild(container);
   });
 
   afterEach(() => {
@@ -48,6 +51,7 @@ describe('3p-frame', () => {
     if (m) {
       m.parentElement.removeChild(m);
     }
+    document.body.removeChild(container);
   });
 
   function addCustomBootstrap(url) {
@@ -100,12 +104,36 @@ describe('3p-frame', () => {
     div.setAttribute('data-ping', 'pong');
     div.setAttribute('width', '50');
     div.setAttribute('height', '100');
-    div.setAttribute('ampcid', 'cidValue');
 
-    div.getLayoutBox = function() {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    div.getIntersectionChangeEntry = function() {
       return {
-        width: 100,
-        height: 200,
+        time: 1234567888,
+        rootBounds: {
+          left: 0,
+          top: 0,
+          width,
+          height,
+          bottom: height,
+          right: width,
+          x: 0,
+          y: 0,
+        },
+        boundingClientRect: {
+          width: 100,
+          height: 200,
+        },
+        intersectionRect: {
+          left: 0,
+          top: 0,
+          width: 0,
+          height: 0,
+          bottom: 0,
+          right: 0,
+          x: 0,
+          y: 0,
+        },
       };
     };
 
@@ -115,14 +143,13 @@ describe('3p-frame', () => {
         .returns('http://acme.org/')
         .once();
 
-    const iframe = getIframe(window, div, '_ping_');
+    container.appendChild(div);
+    const iframe = getIframe(window, div, '_ping_', {clientId: 'cidValue'});
     const src = iframe.src;
     const locationHref = location.href;
     expect(locationHref).to.not.be.empty;
-    const docInfo = documentInfoFor(window);
+    const docInfo = documentInfoForDoc(window.document);
     expect(docInfo.pageViewId).to.not.be.empty;
-    const width = window.innerWidth;
-    const height = window.innerHeight;
     const amp3pSentinel = iframe.getAttribute('data-amp-3p-sentinel');
     const fragment =
         '{"testAttr":"value","ping":"pong","width":50,"height":100,' +
@@ -133,6 +160,7 @@ describe('3p-frame', () => {
         '"location":{"href":"' + locationHref + '"},"tagName":"MY-ELEMENT",' +
         '"mode":{"localDev":true,"development":false,"minified":false,' +
         '"test":false,"version":"$internalRuntimeVersion$"}' +
+        ',"canary":true' +
         ',"hidden":false' +
         ',"startTime":1234567888' +
         ',"amp3pSentinel":"' + amp3pSentinel + '"' +
@@ -157,11 +185,6 @@ describe('3p-frame', () => {
       expect(win.context.canonicalUrl).to.equal('https://foo.bar/baz');
       expect(win.context.location.href).to.equal(locationHref);
       expect(win.context.location.origin).to.equal('http://localhost:9876');
-      if (location.ancestorOrigins) {
-        expect(win.context.location.originValidated).to.be.true;
-      } else {
-        expect(win.context.location.originValidated).to.be.false;
-      }
       expect(win.context.pageViewId).to.equal(docInfo.pageViewId);
       expect(win.context.referrer).to.equal('http://acme.org/');
       expect(win.context.data.testAttr).to.equal('value');
@@ -278,13 +301,22 @@ describe('3p-frame', () => {
 
     const div = document.createElement('div');
     div.setAttribute('type', '_ping_');
-    div.getLayoutBox = function() {
+    div.setAttribute('width', 100);
+    div.setAttribute('height', 200);
+    div.getIntersectionChangeEntry = function() {
       return {
-        width: 100,
-        height: 200,
+        left: 0,
+        top: 0,
+        width: 0,
+        height: 0,
+        bottom: 0,
+        right: 0,
+        x: 0,
+        y: 0,
       };
     };
 
+    container.appendChild(div);
     const name = getIframe(window, div).name;
     resetServiceForTesting(window, 'bootstrapBaseUrl');
     resetCountForTesting();

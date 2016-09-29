@@ -13,13 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 import {
   allowRenderOutsideViewport,
   decrementLoadingAds,
-  incrementLoadingAds} from '../../amp-ad/0.1/amp-ad-3p-impl';
-import {AmpAdApiHandler} from '../../amp-ad/0.1/amp-ad-api-handler';
-import {adPreconnect} from '../../../ads/_config';
+  incrementLoadingAds,
+} from '../../amp-ad/0.1/concurrent-load';
+import {adConfig} from '../../../ads/_config';
 import {removeElement, removeChildren} from '../../../src/dom';
 import {cancellation} from '../../../src/error';
 import {createShadowEmbedRoot} from '../../../src/shadow-embed';
@@ -147,6 +146,7 @@ export class AmpA4A extends AMP.BaseElement {
    */
   constructor(element) {
     super(element);
+    dev().assert(AMP.AmpAdApiHandler);
 
     /** @private {?Promise<!boolean>} */
     this.adPromise_ = null;
@@ -237,7 +237,7 @@ export class AmpA4A extends AMP.BaseElement {
    * @override
    */
   preconnectCallback(unusedOnLayout) {
-    const preconnect = adPreconnect[this.element.getAttribute('type')];
+    const preconnect = adConfig[this.element.getAttribute('type')].preconnect;
     // NOTE(keithwrightbos): using onLayout to indicate if preconnect should be
     // given preferential treatment.  Currently this would be false when
     // relevant (i.e. want to preconnect on or before onLayoutMeasure) which
@@ -370,30 +370,31 @@ export class AmpA4A extends AMP.BaseElement {
   /**
    * Handles uncaught errors within promise flow.
    * @param {string|Error} error
-   * @return {!Promise<string>}
+   * @return {string|Error}
    * @private
    */
   promiseErrorHandler_(error) {
-    if (error && error.message && error.message.indexOf('amp-a4a: ') == 0) {
-      // caught previous call to promiseErrorHandler?  Infinite loop?
-      return Promise.reject(error);
-    }
-    if (error && error instanceof Error &&
-        error.message == cancellation().message) {
-      // Rethrow if cancellation
-      throw error;
+    if (error instanceof Error) {
+      if (error.message.indexOf('amp-a4a: ') == 0) {
+        // caught previous call to promiseErrorHandler?  Infinite loop?
+        return error;
+      }
+      if (error.message == cancellation().message) {
+        // Rethrow if cancellation
+        throw error;
+      }
     }
     // Returning promise reject should trigger unhandledrejection which will
     // trigger reporting via src/error.js
     const adQueryIdx = this.adUrl_ ? this.adUrl_.indexOf('?') : -1;
     const state = {
-      'm': error ? error.message : '',
+      'm': error instanceof Error ? error.message : error,
       'tag': this.element.tagName,
       'type': this.element.getAttribute('type'),
       'au': adQueryIdx < 0 ? '' :
             this.adUrl_.substring(adQueryIdx + 1, adQueryIdx + 251),
     };
-    return Promise.reject(new Error('amp-a4a: ' + JSON.stringify(state)));
+    return new Error('amp-a4a: ' + JSON.stringify(state));
   }
 
   /** @override */
@@ -409,13 +410,21 @@ export class AmpA4A extends AMP.BaseElement {
     // valid AMP.
     this.timerId_ = incrementLoadingAds(this.win);
     return this.adPromise_.then(rendered => {
+      if (rendered instanceof Error) {
+        // If we got as far as getting a URL, then load the ad, but note the
+        // error.
+        if (this.adUrl_) {
+          this.renderViaIframe_(true);
+        }
+        throw rendered;
+      };
       if (!rendered) {
         // Was not AMP creative so wrap in cross domain iframe.  layoutCallback
         // has already executed so can do so immediately.
         this.renderViaIframe_(true);
       }
       this.rendered_ = true;
-    }).catch(error => this.promiseErrorHandler_(error));
+    }).catch(error => Promise.reject(this.promiseErrorHandler_(error)));
   }
 
   /** @override  */
@@ -518,11 +527,10 @@ export class AmpA4A extends AMP.BaseElement {
     return xhrFor(this.win)
         .fetch(adUrl, xhrInit)
         .catch(unusedReason => {
-          // Error so set rendered_ so iframe will not be written on
-          // layoutCallback.
-          // TODO: is this the appropriate action?  Perhaps we should just allow
-          // the ad to be rendered via iframe.
-          this.rendered_ = true;
+          // If an error occurs, let the ad be rendered via iframe after delay.
+          // TODO(taymonbeal): Figure out a more sophisticated test for deciding
+          // whether to retry with an iframe after an ad request failure or just
+          // give up and render the fallback content (or collapse the ad slot).
           return null;
         });
   }
@@ -582,7 +590,6 @@ export class AmpA4A extends AMP.BaseElement {
         // layoutCallback) as the the creative has been verified as AMP and
         // will run efficiently.
         this.renderViaIframe_();
-        this.rendered_ = true;
         return true;
       } else {
         try {
@@ -666,12 +673,13 @@ export class AmpA4A extends AMP.BaseElement {
       'src', xhrFor(this.win).getCorsUrl(this.win, this.adUrl_));
     this.vsync_.mutate(() => {
       // TODO(keithwrightbos): noContentCallback?
-      this.apiHandler_ = new AmpAdApiHandler(this, this.element);
+      this.apiHandler_ = new AMP.AmpAdApiHandler(this, this.element);
       // TODO(keithwrightbos): startup returns load event, do we need to wait?
       // Set opt_defaultVisible to true as 3p draw code never executed causing
       // render-start event never to fire which will remove visiblity hidden.
       this.apiHandler_.startUp(
         iframe, /* is3p */opt_isNonAmpCreative, /* opt_defaultVisible */true);
+      this.rendered_ = true;
     });
   }
 
